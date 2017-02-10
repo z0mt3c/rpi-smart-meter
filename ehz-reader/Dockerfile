@@ -5,6 +5,6 @@ RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
 
 # Bundle app source
-COPY . /usr/src/app
+COPY ehz-reader /usr/src/app
 
 ENTRYPOINT [ "./ehz-reader" ]

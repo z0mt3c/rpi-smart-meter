@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"flag"
 	"log"
 	"time"
 
-	"github.com/influxdata/influxdb/client/v2"
 	"github.com/tarm/serial"
 )
 
@@ -39,7 +39,7 @@ func splitMsg(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-func parseMsg(clnt client.Client, msg []byte) {
+func parseMsg(msg []byte) {
 	// log.Printf("%x\n", msg)
 	var fields = make(map[string]interface{})
 	for _, m := range measurements {
@@ -58,44 +58,36 @@ func parseMsg(clnt client.Client, msg []byte) {
 	}
 	log.Printf("fields: %v", fields)
 	if len(fields) > 0 {
-		writePoints(clnt, fields)
+		writePoints(fields)
 	}
 }
 
-func writePoints(clnt client.Client, fields map[string]interface{}) {
-	bp, err := client.NewBatchPoints(client.BatchPointsConfig{Database: "home"})
-	if err != nil {
-		log.Fatal(err)
-	}
-	// Create a point and add to batch
-	tags := map[string]string{"meter": "household"}
-	pt, err := client.NewPoint("power_consumption", tags, fields, time.Now())
-	if err != nil {
-		log.Fatal(err)
-	}
-	bp.AddPoint(pt)
-
-	if err := clnt.Write(bp); err != nil {
-		log.Fatal(err)
-	}
-}
+var device = flag.String("device", getenv("EHZ_DEVICE", "/dev/ttyUSB0"), "usb reader device")
 
 func main() {
-	c := &serial.Config{Name: "/dev/ttyUSB0", Baud: 9600, ReadTimeout: time.Second * 3}
+	influxConfig := InfluxConfig{
+		URI:         *flag.String("influx", getenv("EHZ_INFLUX_URI", "http://influxdb:8086"), "influx uri"),
+		Database:    *flag.String("db", getenv("EHZ_INFLUX_DB", "home"), "database name"),
+		Measurement: *flag.String("measurement", getenv("EHZ_INFLUX_MEASUREMENT", "electric_meter"), "measurement"),
+		Meter:       *flag.String("meter", getenv("EHZ_INFLUX_METER", "main"), "value of meter tag"),
+	}
+
+	flag.Parse()
+
+	setupInflux(influxConfig)
+
+	c := &serial.Config{Name: *device, Baud: 9600, ReadTimeout: time.Second * 3}
 	s, err := serial.OpenPort(c)
 	if err != nil {
 		log.Fatal(err)
 	}
-	clnt, err := client.NewHTTPClient(client.HTTPConfig{Addr: "http://influxdb:8086"})
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	reader := bufio.NewReader(s)
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 2048), 4*1024)
 	scanner.Split(splitMsg)
 
 	for scanner.Scan() {
-		go parseMsg(clnt, scanner.Bytes())
+		go parseMsg(scanner.Bytes())
 	}
 }
